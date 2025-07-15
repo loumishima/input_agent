@@ -39,6 +39,8 @@ def get_validation_prompt():
         - Verifique a data, seguindo o padrão "dd-mm-yyyy"
         - Verifique se o modelo do carro existe.
         - Verifique se os serviços estão disponíveis para carros
+         - Serviços disponíveis: Mecânica e Hidráulica
+         - Bloqueie qualquer tópico que não seja dessas duas áreas
 
         Retorne nesse formato JSON:
         {format_instructions}

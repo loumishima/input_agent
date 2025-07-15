@@ -1,4 +1,5 @@
-from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
+from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 from typing import Optional
 
@@ -30,4 +31,21 @@ class InputValidator:
 
         ValidationSchema = self.validate_pipeline().invoke({"input": input})
 
-        return (ValidationSchema.isValid, ValidationSchema.whatsWrong)
+        return ValidationSchema.model_dump()
+
+        # if not ValidationSchema.isValid:
+        #     return ValidationSchema.whatsWrong
+
+        # # mande uma mensagem de sucesso na escrita
+        # prompt = PromptTemplate.from_template(
+        #     """
+        #     Gere uma mensagem de resposta com o nome do cliente,
+        #     agradecendo pela escolha e mostre uma
+        #     confirmação da reserva:
+
+        #     {input}
+        #     """
+        # )
+        # chain = prompt | self.llm | StrOutputParser()
+
+        # return chain.invoke({"input": input})
