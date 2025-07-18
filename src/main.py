@@ -1,30 +1,52 @@
-from typing import Optional, Sequence
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import PromptTemplate
-from langchain_core.memory import BaseMemory
-from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
-from langchain_core.runnables import RunnableParallel
+from langchain_core.messages import SystemMessage
+from src.structures.states import State
+from src.agents.extractor_agent import ExtractorAgent
+from langgraph.graph import StateGraph, END
 
-from src.agents.agent import start_agent
-from src.chains.pipelines import MechanicTagging, ExtractorPipeline
-from src.chains.validator import InputValidator
-from src.models.llm import get_llm_model
-from src.prompts.rule_prompt import (
-    get_general_prompt,
-    get_validation_prompt,
-    get_confirmation_message_prompt,
-)
+from src.prompts.template import get_prompt_template
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
-def build_message(llm, prompt, parser):
-    pipeline = prompt | llm | parser
+def run_extractor(state):
+    agent = ExtractorAgent(
+        model_name="gpt-4o", state=state, prompt=get_prompt_template()
+    )
+    return agent.execute()
 
-    return pipeline
+
+def workflow():
+
+    workflow_builder = StateGraph(State)  # seu TypedDict State
+
+    workflow_builder.add_node("extract", run_extractor)
+    workflow_builder.set_entry_point("extract")
+    workflow_builder.add_edge("extract", END)
+
+    return workflow_builder.compile()
 
 
 if __name__ == "__main__":
+    initial_state = State(
+        query="Oi, nasci em 20 de março de 1990.",
+        messages=[],
+        category=None,
+        answer=None,
+        next_tool=None,
+    )
+    workflow_compiled = workflow()
+    final_state = workflow_compiled.invoke(initial_state)
+    print("Resposta da LLM:", final_state["answer"])
+    print("Histórico de mensagens:", [m.content for m in final_state["messages"]])
 
-    agent = start_agent()
+    print(type(final_state))
+    print(type(final_state["answer"]))
+    while final_state["answer"].erro:
+        print(final_state["answer"].erro)
 
-    resposta = agent.run("Por favor, agende troca de óleo para o João no dia 22/07.")
-    print(resposta)
+        final_state["query"] = input("Complete as infos restantes")
+        final_state = workflow_compiled.invoke(final_state)
+
+        print(final_state["answer"])
