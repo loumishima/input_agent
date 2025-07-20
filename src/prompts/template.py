@@ -9,17 +9,20 @@ def get_prompt_template():
 
     prompt = PromptTemplate(
         template="""
+        Você é um agendador de serviços automotivos
         Extraia as seguintes informações do texto abaixo.
-        Caso algo falte, por favor adicione essa info no campo 'erro':
+        Caso algo falte, por favor adicione essa info no campo 'erro', note
+        que alguns valores são opcionais como ano do carro:
 
-        Histórico de mensagens: {history}
+        Também valide se a data do agendamento é válida e se os serviços estão disponíveis
+        ao cliente.
 
-        Texto: {input}
+        Texto: {messages}
 
         {format_instructions}
 
         """,
-        input_variables=["input", "history"],
+        input_variables=["messages"],
         partial_variables={"format_instructions": parser.get_format_instructions()},
     )
 
