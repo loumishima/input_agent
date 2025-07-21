@@ -1,16 +1,12 @@
-from typing import List, Literal, TypedDict
+from typing import List, TypedDict
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
+from langchain_core.messages import SystemMessage, BaseMessage
 
-from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import StateGraph, END, START
+from langgraph.graph import StateGraph, END
 from langgraph.types import interrupt, Command
 
-from src.tools.date import DateValidation
 from src.structures.parsers import PessoaInfo
-from src.prompts.template import get_prompt_template
-from pydantic import BaseModel
 
 
 from dotenv import load_dotenv
@@ -19,12 +15,15 @@ load_dotenv()
 
 
 class State(TypedDict):
+    messages: List[BaseMessage]
+    user_input: str = None
+    llm_response: str = None
     dados: PessoaInfo = None
-    messages: List[BaseMessage] = None
-    llm_output: str = None
+    error: str = None
+    approved: bool = False
 
 
-llm = ChatOpenAI(model="gpt-4o")
+llm = ChatOpenAI(model="o4-mini")
 memory = MemorySaver()
 
 
@@ -36,44 +35,108 @@ def get_static_methods(cls):
     return static_methods
 
 
-prompt = SystemMessage(
-    content="""
-        Você é um extrator de informações de serviços automotivos
-        Extraia as seguintes informações do texto abaixo.
-        Caso algo falte, por favor adicione essa info no campo 'erro', note
-        que alguns valores são opcionais como ano do carro:
+def intro(state: State):
+    result = llm.invoke(
+        [
+            SystemMessage(
+                content="""
+                Gere uma mensagem de boas vindas a uma oficina, indicando que ele tem que adicionar:
+                - modelo do veiculo
+                - Ano do veiculo (Opcional)
+                - Servicos a serem feitos
+                - Data do agendamento, indicando funcionamento de segunda a sexta
+                """
+            )
+        ]
+    )
 
-        Também valide se a data do agendamento é válida e se os serviços estão disponíveis
-        ao cliente.
+    print(result.content)
 
-        Salve os dados estruturados para que o próximo agente consiga avançar no agendamento
-                       """
-)
 
-agente_extrator = create_react_agent(
-    llm,
-    tools=get_static_methods(DateValidation),
-    prompt=prompt,
-    response_format=PessoaInfo,
-)
+llm_extractor = llm.with_structured_output(PessoaInfo)
 
 
 def extract(state: State):
-    result = agente_extrator.invoke({"messages": state["messages"]})
 
-    state["messages"] = result["messages"]
-    state["dados"] = result["structured_response"]
-    state["llm_output"] = result["messages"][-1].content
+    if not state.get("user_input"):
+        msg = interrupt({})
+    else:
+        msg = state["user_input"]
+    print(msg)
+    result = llm_extractor.invoke(msg)
+    return {
+        "user_input": msg,
+        "dados": result,
+        "error": result.error,
+    }
 
-    return state
+
+def validador(state: State):
+    print("================= Validacao ===================")
+    from pprint import pprint
+
+    pprint(state)
+    if state["error"]:
+        extra_info = interrupt({"question": state["error"]})
+        return {"user_input": state["user_input"] + " " + extra_info}
+
+
+def confirm(state: State):
+    text = "Por favor confirme os dados abaixo, está tudo correto? (s/n)"
+    print(text)
+    confirmation = interrupt(
+        {
+            "question": text,
+            "dados": state["dados"],
+        }
+    )
+
+    if confirmation == "s":
+        approved = True
+        dados = state["user_input"]
+    else:
+        approved = False
+        dados = None
+
+    return {"approved": approved, "user_input": dados}
+
+
+def route_validacao(state: State):
+    if state["error"]:
+        return "Fix"
+    else:
+        return "Confirm"
+
+
+def route_dados(state: State):
+    """Route back to joke generator or end based upon feedback from the evaluator"""
+
+    if state["approved"]:
+        return "Accepted"
+    return "Rejected"
 
 
 def build_workflow():
     builder = StateGraph(State)
-    builder.add_node("extrator", extract)
+    builder.add_node("intro", intro)
+    builder.add_node("extrair", extract)
+    builder.add_node("validar", validador)
+    builder.add_node("confirmar", confirm)
 
-    builder.set_entry_point("extrator")
-    builder.add_edge("extrator", END)
+    builder.set_entry_point("intro")
+    builder.add_edge("intro", "extrair")
+    builder.add_edge("extrair", "validar")
+    builder.add_conditional_edges(
+        "validar",
+        route_validacao,
+        {  # Name returned by route_joke : Name of next node to visit
+            "Fix": "extrair",
+            "Confirm": "confirmar",
+        },
+    )
+    builder.add_conditional_edges(
+        "confirmar", route_dados, {"Accepted": END, "Rejected": "extrair"}
+    )
 
     return builder.compile(checkpointer=memory)
 
@@ -83,30 +146,18 @@ def build_workflow():
 
 if __name__ == "__main__":
 
+    values_to_input = ["gostaria de trocar o óleo para o dia 22/07/2025"]
+
     config = {"configurable": {"thread_id": "test-thread"}}
     workflow = build_workflow()
-    # Teste
 
-    messages = [
-        HumanMessage(
-            content="Tenho um ford Ka 2004 para trocar o óleo e quero que seja no dia 21/07/2025"
-        )
-    ]
+    result = workflow.invoke({}, config)
 
-    result = workflow.invoke({"messages": messages}, config)
-    for m in result["messages"]:
-        m.pretty_print()
+    while result.get("__interrupt__"):
+        try:
+            message = values_to_input.pop(0)
+        except IndexError:
+            message = input()
+        result = workflow.invoke(Command(resume=message), config=config)
 
-    # print(messages["__interrupt__"])
-    # Output:
-    # Interrupt(value={'question': 'Do you approve the following output?', 'llm_output': 'This is the generated output.'}, ...)
-
-    # Simulate resuming with human input
-    # To test rejection, replace resume="approve" with resume="reject"
-    # final_result = workflow.invoke(Command(resume="approve"), config=config)
-    from pprint import pprint
-
-    pprint(result)
-    print(result.keys())
-    # print(result["llm_output"])
-    # print(messages.structured_response)
+    print(result)

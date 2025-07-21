@@ -21,7 +21,7 @@ class PessoaInfo(BaseModel):
     servicos: Optional[Sequence[str]] = Field(
         ..., description="Servicos a serem realizados no carro"
     )
-    erro: Optional[str] = Field(
+    error: Optional[str] = Field(
         ...,
         description="Explique se alguma informação está faltando ou incorreta. Caso tudo esteja correto, deixe esse campo vazio.",
     )
